@@ -1,4 +1,13 @@
 /*
+ * Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+ *
+ * Licensed under the Apache License 2.0 (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
+*/
+
+/*
  * This file is meant to be included from ec_kmgmt.c
  */
 
@@ -80,7 +89,7 @@ static const OSSL_PARAM ec_all_types[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *ec_types[] = {
+static const OSSL_PARAM *const ec_types[] = {
     NULL,
     ec_private_key_types,
     ec_public_key_types,

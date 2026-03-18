@@ -124,7 +124,6 @@ be chosen from the following set:
     'u' An unsigned number that fits in the C<unsigned long> type
     'c' File in PEM, DER, or S/MIME format
     'F' A file in PEM or DER format
-    'E' Like 'F' but also allows ENGINE
     'f' Any file format
 
 The B<helpstr> is what to display when the user uses the help option,
@@ -153,7 +152,7 @@ on multiple lines; each entry should use B<OPT_MORE_STR>, like this:
         {OPT_MORE_STR, 0, 0,
          "This flag is not really needed on Unix systems"},
         {OPT_MORE_STR, 0, 0,
-         "(Unix and descendents for ths win!)"}
+         "(Unix and descendents for the win!)"}
 
 Each subsequent line will be indented the correct amount.
 
@@ -187,7 +186,7 @@ B<OPT_PARAMETERS> macro:
     OPT_PARAMETERS()
     {OPT_PARAM_STR, 1, '-', "Parameters:\n"}
 
-Every "option" after after this should contain the parameter and 
+Every "option" after after this should contain the parameter and
 the help string:
 
     {"text", 0, 0, "Words to display (optional)"},
@@ -325,7 +324,7 @@ things very differently.
 
 =head1 COPYRIGHT
 
-Copyright 2021 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2021-2022 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use this
 file except in compliance with the License.  You can obtain a copy in the file

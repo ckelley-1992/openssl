@@ -42,7 +42,7 @@ the make variable TESTS to specify them, like this:
 
     $ make TESTS='test_rsa test_dsa' test            # Unix
     $ mms/macro="TESTS=test_rsa test_dsa" test       ! OpenVMS
-    $ nmake TESTS='test_rsa test_dsa' test           # Windows
+    $ nmake TESTS="test_rsa test_dsa" test           # Windows
 
 And of course, you can combine (Unix examples shown):
 
@@ -149,17 +149,33 @@ To run up to four tests in parallel at any given time:
 
     $ make HARNESS_JOBS=4 test
 
+Random numbers in tests
+-----------------------
+
+Some tests use random numbers as part of the test. In some cases a test failure
+may occur for some random numbers, but not for others. The seed used for the
+rand number generator can be set via the `OPENSSL_TEST_RAND_SEED` environment
+variable. It can also be set via the `OPENSSL_TEST_RAND_ORDER` environment
+variable which additionally randomises the order tests are run in (see below).
+
+When a test fails the test harness will display the seed used during the test
+(displaying either the `OPENSSL_TEST_RAND_SEED` or `OPENSSL_TEST_RAND_ORDER`
+environment variable value that must be used to recreate the results), e.g.
+
+    $ make OPENSSL_TEST_RAND_SEED=42 test
+
 Randomisation of Test Ordering
 ------------------------------
 
 By default, the test harness will execute tests in the order they were added.
 By setting the `OPENSSL_TEST_RAND_ORDER` environment variable to zero, the
-test ordering will be randomised.  If a randomly ordered test fails, the
-seed value used will be reported.  Setting the `OPENSSL_TEST_RAND_ORDER`
-environment variable to this value will rerun the tests in the same
-order.  This assures repeatability of randomly ordered test runs.
-This repeatability is independent of the operating system, processor or
-platform used.
+test ordering will be randomised. This additionally seeds the random number
+generator used within the tests as described in the section above. If a randomly
+ordered test fails, the seed value used will be reported.  Setting the
+`OPENSSL_TEST_RAND_ORDER` environment variable to this value will rerun the
+tests in the same order and will also seed the test random number generator.
+This assures repeatability of randomly ordered test runs. This repeatability is
+independent of the operating system, processor or platform used.
 
 To randomise the test ordering:
 
@@ -168,3 +184,19 @@ To randomise the test ordering:
 To run the tests using the order defined by the random seed `42`:
 
     $ make OPENSSL_TEST_RAND_ORDER=42 test
+
+Running Tests under Valgrind
+----------------------------
+
+Normally, testing for memory leaks is accomplished by building Openssl with the
+enable-asan option, which links the library with the compiler asan library.  However
+some people prefer to use valgrind to do dynamic instrumentation for memory leak checking.
+OpenSSL also offers a suppression file to suppress reachable memory leaks, that are often
+inappropriately considered to be true leaks.  In order to maintain and test this
+suppression file, OpenSSL tests can be run under valgrind automatically.
+
+To run the test suite under valgrind:
+
+    $ make OSSL_USE_VALGRIND=yes test
+
+Doing so will create valgrind.log file for each test under the test-runs subdirectory.

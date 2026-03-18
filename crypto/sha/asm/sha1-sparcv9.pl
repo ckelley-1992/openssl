@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2007-2020 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2007-2025 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -8,10 +8,10 @@
 
 
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 #
 # Hardware SPARC T4 support by David S. Miller
 # ====================================================================
@@ -187,7 +187,10 @@ ___
 }
 
 $code.=<<___;
-#include "sparc_arch.h"
+#ifndef __ASSEMBLER__
+# define __ASSEMBLER__ 1
+#endif
+#include "crypto/sparc_arch.h"
 
 #ifdef __arch64__
 .register	%g2,#scratch
@@ -368,7 +371,7 @@ $code.=<<___;
 	restore
 .type	sha1_block_data_order,#function
 .size	sha1_block_data_order,(.-sha1_block_data_order)
-.asciz	"SHA1 block transform for SPARCv9, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz	"SHA1 block transform for SPARCv9, CRYPTOGAMS by <https://github.com/dot-asm>"
 .align	4
 ___
 

@@ -22,12 +22,12 @@ following additions:
 
 =over 4
 
-=item -
+=item *
 
 The template perl code delimiters (given with the C<DELIMITER> option)
 are set to C<{-> and C<-}> by default.
 
-=item -
+=item *
 
 A few extra functions are offered to be used by the template perl code, see
 L</Functions>.
@@ -41,6 +41,14 @@ use File::Spec::Functions;
 use Text::Template 1.46;
 
 our @ISA = qw(Text::Template);  # parent
+
+sub tmpl_error {
+    my (%err_dict) = @_;
+
+    $ERROR = $err_dict{"error"};
+
+    return undef;
+}
 
 sub new {
     my $class = shift;
@@ -66,6 +74,7 @@ sub fill_in {
                                     output_on => sub { $self->output_on() },
                                     output_off => sub { $self->output_off() },
                                     %hash },
+                          BROKEN => \&tmpl_error,
                           %opts);
 }
 

@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2016-2020 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2016-2025 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -8,10 +8,10 @@
 
 #
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 #
 # This module implements Poly1305 hash for SPARCv9, vanilla, as well
@@ -52,7 +52,10 @@ my ($h0,$h1,$h2,$h3, $t0,$t1,$t2)	= map("%o$_",(0..5,7));
 my ($d0,$d1,$d2,$d3)			= map("%g$_",(1..4));
 
 $code.=<<___;
-#include "sparc_arch.h"
+#ifndef __ASSEMBLER__
+# define __ASSEMBLER__ 1
+#endif
+#include "crypto/sparc_arch.h"
 
 #ifdef	__arch64__
 .register	%g2,#scratch
@@ -1040,7 +1043,7 @@ $code.=<<___;
 .word	0x3e300000,0x00000000		! 2^(52+16+0-96)
 .word	0x40300000,0x00000000		! 2^(52+16+32-96)
 .word	0x42300000,0x00000000		! 2^(52+16+64-96)
-.asciz	"Poly1305 for SPARCv9/VIS3/FMA, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz	"Poly1305 for SPARCv9/VIS3/FMA, CRYPTOGAMS by <https://github.com/dot-asm>"
 .align	4
 ___
 }

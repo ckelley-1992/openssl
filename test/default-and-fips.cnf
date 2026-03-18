@@ -1,5 +1,8 @@
 openssl_conf = openssl_init
 
+# Comment out the next line to ignore configuration errors
+config_diagnostics = 1
+
 .include fipsmodule.cnf
 
 [openssl_init]
@@ -10,4 +13,4 @@ default = default_sect
 fips = fips_sect
 
 [default_sect]
-activate = 1
+activate = yes

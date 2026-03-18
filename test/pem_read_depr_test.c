@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -15,6 +15,9 @@
 
 #include <openssl/pem.h>
 #include <openssl/bio.h>
+#include <openssl/dh.h>
+#include <openssl/dsa.h>
+#include <openssl/rsa.h>
 
 #include "testutil.h"
 
@@ -29,7 +32,7 @@ static BIO *getfile(const char *filename)
         goto err;
     infile = BIO_new_file(paramsfile, "r");
 
- err:
+err:
     OPENSSL_free(paramsfile);
     return infile;
 }
@@ -50,7 +53,7 @@ static int test_read_dh_params(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     DH_free(dh);
     return testresult;
@@ -71,7 +74,7 @@ static int test_read_dh_x942_params(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     DH_free(dh);
     return testresult;
@@ -94,7 +97,7 @@ static int test_read_dsa_params(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     DSA_free(dsa);
     return testresult;
@@ -115,7 +118,7 @@ static int test_read_dsa_private(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     DSA_free(dsa);
     return testresult;
@@ -136,7 +139,7 @@ static int test_read_dsa_public(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     DSA_free(dsa);
     return testresult;
@@ -158,7 +161,7 @@ static int test_read_rsa_private(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     RSA_free(rsa);
     return testresult;
@@ -179,7 +182,7 @@ static int test_read_rsa_public(void)
 
     testresult = 1;
 
- err:
+err:
     BIO_free(infile);
     RSA_free(rsa);
     return testresult;

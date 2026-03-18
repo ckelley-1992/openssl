@@ -1,4 +1,7 @@
 
+# Comment out the next line to ignore configuration errors
+config_diagnostics = 1
+
 CN2 = Brother 2
 
 ####################################################################
@@ -6,6 +9,8 @@ CN2 = Brother 2
 distinguished_name	= req_distinguished_name
 encrypt_rsa_key		= no
 default_md		= sha1
+req_extensions		= empty
+x509_extensions		= minimal
 
 [ req_distinguished_name ]
 countryName			= Country Name (2 letter code)
@@ -27,6 +32,23 @@ countryName		= AU
 organizationName	= Dodgy Brothers
 0.commonName		= Brother 1
 1.commonName		= $ENV::CN2
+
+[ empty ]
+
+[ minimal ]
+subjectKeyIdentifier	= hash
+authorityKeyIdentifier	= keyid:nonss
+
+[ v3_skid ]
+subjectKeyIdentifier	= hash
+
+[ v3_akid ]
+# With just the AKID, we can't produce keyids for self-signed certs.
+authorityKeyIdentifier	= keyid:nonss, issuer
+
+[ v3_askid ]
+subjectKeyIdentifier	= hash
+authorityKeyIdentifier	= keyid:always
 
 [ v3_ee ]
 subjectKeyIdentifier	= hash
@@ -80,7 +102,7 @@ emailAddress		= optional
 
 [ v3_ca ]
 subjectKeyIdentifier	= hash
-authorityKeyIdentifier	= keyid:always,issuer:always
+authorityKeyIdentifier	= keyid:nonss,issuer:nonss
 basicConstraints 	= critical,CA:true,pathlen:1
 keyUsage		= cRLSign, keyCertSign
 issuerAltName		= issuer:copy

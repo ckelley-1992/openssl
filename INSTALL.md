@@ -2,8 +2,8 @@ Build and Install
 =================
 
 This document describes installation on all supported operating
-systems (the Unix/Linux family, including macOS), OpenVMS,
-and Windows).
+systems: the Unix/Linux family (including macOS), OpenVMS,
+and Windows.
 
 Table of Contents
 =================
@@ -19,7 +19,7 @@ Table of Contents
    - [Build Type](#build-type)
    - [Directories](#directories)
    - [Compiler Warnings](#compiler-warnings)
-   - [ZLib Flags](#zlib-flags)
+   - [Compression Algorithm Flags](#compression-algorithm-flags)
    - [Seeding the Random Generator](#seeding-the-random-generator)
    - [Setting the FIPS HMAC key](#setting-the-FIPS-HMAC-key)
    - [Enable and Disable Features](#enable-and-disable-features)
@@ -51,7 +51,9 @@ To install OpenSSL, you will need:
  * A "make" implementation
  * Perl 5 with core modules (please read [NOTES-PERL.md](NOTES-PERL.md))
  * The Perl module `Text::Template` (please read [NOTES-PERL.md](NOTES-PERL.md))
- * an ANSI C compiler
+ * a C-99 compiler
+ * POSIX C library (at least POSIX.1-2008), or compatible types and
+   functionality.
  * a development environment in the form of development libraries and C
    header files
  * a supported operating system
@@ -64,6 +66,8 @@ issues and other details, please read one of these:
  * [Notes for Windows platforms](NOTES-WINDOWS.md)
  * [Notes for the DOS platform with DJGPP](NOTES-DJGPP.md)
  * [Notes for the OpenVMS platform](NOTES-VMS.md)
+ * [Notes for the HPE NonStop platform](NOTES-NONSTOP.md)
+ * [Notes on POSIX](NOTES-POSIX.md)
  * [Notes on Perl](NOTES-PERL.md)
  * [Notes on Valgrind](NOTES-VALGRIND.md)
 
@@ -120,21 +124,11 @@ represents one of the four commands
 Arguments
 ---------
 
-**Mandatory arguments** are enclosed in double curly braces.
-A simple example would be
+**Optional Arguments** are enclosed in square brackets.
 
-    $ type {{ filename }}
+    [option...]
 
-which is to be understood to use the command `type` on some file name
-determined by the user.
-
-**Optional Arguments** are enclosed in double square brackets.
-
-    [[ options ]]
-
-Note that the notation assumes spaces around `{`, `}`, `[`, `]`, `{{`, `}}` and
-`[[`, `]]`.  This is to differentiate from OpenVMS directory
-specifications, which also use [ and ], but without spaces.
+A trailing ellipsis means that more than one could be specified.
 
 Quick Installation Guide
 ========================
@@ -151,7 +145,7 @@ Use the following commands to configure, build and test OpenSSL.
 The testing is optional, but recommended if you intend to install
 OpenSSL for production use.
 
-### Unix / Linux / macOS
+### Unix / Linux / macOS / NonStop
 
     $ ./Configure
     $ make
@@ -177,8 +171,9 @@ issue the following commands to build OpenSSL.
 As mentioned in the [Choices](#choices) section, you need to pick one
 of the four Configure targets in the first command.
 
-Most likely you will be using the `VC-WIN64A` target for 64bit Windows
-binaries (AMD64) or `VC-WIN32` for 32bit Windows binaries (X86).
+Most likely you will be using the `VC-WIN64A`/`VC-WIN64A-HYBRIDCRT` target for
+64bit Windows binaries (AMD64) or `VC-WIN32`/`VC-WIN32-HYBRIDCRT` for 32bit
+Windows binaries (X86).
 The other two options are `VC-WIN64I` (Intel IA64, Itanium) and
 `VC-CE` (Windows CE) are rather uncommon nowadays.
 
@@ -207,7 +202,7 @@ the global search path for system libraries.
 Finally, if you plan on using the FIPS module, you need to read the
 [Post-installation Notes](#post-installation-notes) further down.
 
-### Unix / Linux / macOS
+### Unix / Linux / macOS / NonStop
 
 Depending on your distribution, you need to run the following command as
 root user or prepend `sudo` to the command:
@@ -244,9 +239,8 @@ and issue the following command.
 
     $ nmake install
 
-The easiest way to elevate the Command Prompt is to press and hold down
-the both the `<CTRL>` and `<SHIFT>` key while clicking the menu item in the
-task menu.
+The easiest way to elevate the Command Prompt is to press and hold down both
+the `<CTRL>` and `<SHIFT>` keys while clicking the menu item in the task menu.
 
 The default installation location is
 
@@ -296,7 +290,7 @@ API Level
 Build the OpenSSL libraries to support the API for the specified version.
 If [no-deprecated](#no-deprecated) is also given, don't build with support
 for deprecated APIs in or below the specified version number.  For example,
-addding
+adding
 
     --api=1.1.0 no-deprecated
 
@@ -341,6 +335,14 @@ Build OpenSSL with debugging symbols and zero optimization level.
 
 Build OpenSSL without debugging symbols.  This is the default.
 
+    --coverage
+
+Build OpenSSL with gcov profiling information included
+
+    --pgo
+
+Build OpenSSL optimized using gcov data obtained from --coverage build
+
 Directories
 -----------
 
@@ -350,9 +352,13 @@ Directories
 
 The name of the directory under the top of the installation directory tree
 (see the `--prefix` option) where libraries will be installed.  By default
-this is `lib/`. Note that on Windows only static libraries (`*.lib`) will
+this is `lib`. Note that on Windows only static libraries (`*.lib`) will
 be stored in this location. Shared libraries (`*.dll`) will always be
-installed to the `bin/` directory.
+installed to the `bin` directory.
+
+Some build targets have a multilib postfix set in the build configuration.
+For these targets the default libdir is `lib<multilib-postfix>`. Please use
+`--libdir=lib` to override the libdir if adding the postfix is undesirable.
 
 ### openssldir
 
@@ -388,8 +394,39 @@ for OpenSSL development.  It only works when using gcc or clang as the compiler.
 If you are developing a patch for OpenSSL then it is recommended that you use
 this option where possible.
 
-ZLib Flags
-----------
+Compression Algorithm Flags
+---------------------------
+
+### with-brotli-include
+
+    --with-brotli-include=DIR
+
+The directory for the location of the brotli include files (i.e. the location
+of the **brotli** include directory).  This option is only necessary if
+[enable-brotli](#enable-brotli) is used and the include files are not already
+on the system include path.
+
+### with-brotli-lib
+
+    --with-brotli-lib=LIB
+
+**On Unix**: this is the directory containing the brotli libraries.
+If not provided, the system library path will be used.
+
+The names of the libraries are:
+
+* libbrotlicommon.a or libbrotlicommon.so
+* libbrotlidec.a or libbrotlidec.so
+* libbrotlienc.a or libbrotlienc.so
+
+**On Windows:** this is the directory containing the brotli libraries.
+If not provided, the system library path will be used.
+
+The names of the libraries are:
+
+* brotlicommon.lib
+* brotlidec.lib
+* brotlienc.lib
 
 ### with-zlib-include
 
@@ -414,6 +451,32 @@ then this flag is optional and defaults to `ZLIB1` if not provided.
 **On VMS:** this is the filename of the zlib library (with or without a path).
 This flag is optional and if not provided then `GNV$LIBZSHR`, `GNV$LIBZSHR32`
 or `GNV$LIBZSHR64` is used by default depending on the pointer size chosen.
+
+### with-zstd-include
+
+    --with-zstd-include=DIR
+
+The directory for the location of the Zstd include file. This option is only
+necessary if [enable-std](#enable-zstd) is used and the include file is not
+already on the system include path.
+
+OpenSSL requires Zstd 1.4 or greater. The Linux kernel source contains a
+*zstd.h* file that is not compatible with the 1.4.x Zstd distribution, the
+compilation will generate an error if the Linux *zstd.h* is included before
+(or instead of) the Zstd distribution header.
+
+### with-zstd-lib
+
+    --with-zstd-lib=LIB
+
+**On Unix**: this is the directory containing the Zstd library.
+If not provided the system library path will be used.
+
+**On Windows:** this is the filename of the Zstd library (with or
+without a path).  This flag must be provided if the
+[enable-zstd-dynamic](#enable-zstd-dynamic) option is not also used.
+If `zstd-dynamic` is used then this flag is optional and defaults
+to `LIBZSTD` if not provided.
 
 Seeding the Random Generator
 ----------------------------
@@ -452,12 +515,8 @@ This source is ignored by the FIPS provider.
 
 ### rdcpu
 
-Use the `RDSEED` or `RDRAND` command if provided by the CPU.
-
-### librandom
-
-Use librandom (not implemented yet).
-This source is ignored by the FIPS provider.
+Use the `RDSEED` or `RDRAND` command on x86 or `RNDRRS` command on aarch64
+if provided by the CPU.
 
 ### none
 
@@ -470,6 +529,35 @@ at the end of this document.
 
 [rng]: #notes-on-random-number-generation
 
+### jitter
+
+When configured with `enable-jitter`, a "JITTER" RNG is compiled that
+can provide an alternative software seed source. It can be configured
+by setting `seed` option in `openssl.cnf`. A minimal `openssl.cnf` is
+shown below:
+
+    openssl_conf = openssl_init
+
+    [openssl_init]
+    random = random
+
+    [random]
+    seed=JITTER
+
+It uses a statically linked [jitterentropy-library] as the seed source.
+
+Additional configuration flags available:
+
+    --with-jitter-include=DIR
+
+The directory for the location of the jitterentropy.h include file, if
+it is outside the system include path.
+
+    --with-jitter-lib=DIR
+
+This is the directory containing the static libjitterentropy.a
+library, if it is outside the system library path.
+
 Setting the FIPS HMAC key
 -------------------------
 
@@ -477,7 +565,7 @@ Setting the FIPS HMAC key
 
 As part of its self-test validation, the FIPS module must verify itself
 by performing a SHA-256 HMAC computation on itself. The default key is
-the SHA256 value of "the holy handgrenade of antioch" and is sufficient
+the SHA256 value of "holy hand grenade of antioch" and is sufficient
 for meeting the FIPS requirements.
 
 To change the key to a different value, use this flag. The value should
@@ -496,11 +584,14 @@ In the following list, always the non-default variant is documented: if
 feature `xxxx` is disabled by default then `enable-xxxx` is documented and
 if feature `xxxx` is enabled by default then `no-xxxx` is documented.
 
-### no-afalgeng
+### enable-static-vcruntime
 
-Don't build the AFALG engine.
+Build binaries that do not require that VC runtimes are installed
 
-This option will be forced on a platform that does not support AFALG.
+This option will produce binaries that are "self contained", that do not
+depend upon VC runtime libraries being installed, so can be used on any
+computer running MS Windows.  Without this option, the build will produce
+binaries that rely on the VC runtimes being installed and available.
 
 ### enable-ktls
 
@@ -531,6 +622,11 @@ access to algorithm internals that are not normally accessible.
 Additional information related to ACVP can be found at
 <https://github.com/usnistgov/ACVP>.
 
+### no-apps
+
+Do not build apps, e.g. the openssl program. This is handy for minimization.
+This option also disables tests.
+
 ### no-asm
 
 Do not use assembler code.
@@ -542,6 +638,14 @@ be used even with this option.
 ### no-async
 
 Do not build support for async operations.
+
+### no-atexit
+
+Do not use `atexit()` in libcrypto builds.
+
+`atexit()` has varied semantics between platforms and can cause SIGSEGV in some
+circumstances. This option disables the atexit registration of OPENSSL_cleanup.
+By default, NonStop configurations use `no-atexit`.
 
 ### no-autoalginit
 
@@ -560,6 +664,17 @@ Don't automatically load all libcrypto/libssl error strings.
 Typically OpenSSL will automatically load human readable error strings.  For a
 statically linked application this may be undesirable if small executable size
 is an objective.
+
+### enable-brotli
+
+Build with support for brotli compression/decompression.
+
+### enable-brotli-dynamic
+
+Like the enable-brotli option, but has OpenSSL load the brotli library dynamically
+when needed.
+
+This is only supported on systems where loading of shared libraries is supported.
 
 ### no-autoload-config
 
@@ -583,6 +698,13 @@ alternative, you can use the language specific variables, `CFLAGS` and `CXXFLAGS
 Use the specified text instead of the default banner at the end of
 configuration.
 
+### --w
+
+On platforms where the choice of 32-bit or 64-bit architecture
+is not explicitly specified, `Configure` will print a warning
+message and wait for a few seconds to let you interrupt the
+configuration. Using this flag skips the wait.
+
 ### no-bulk
 
 Build only some minimal set of features.
@@ -595,12 +717,6 @@ provider indicates if the algorithms it supplies can be cached or not.  Using
 this option will reduce run-time memory usage but it also introduces a
 significant performance penalty.  This option is primarily designed to help
 with detecting incorrect reference counting.
-
-### no-capieng
-
-Don't build the CAPI engine.
-
-This option will be forced if on a platform that does not support CAPI.
 
 ### no-cmp
 
@@ -622,9 +738,10 @@ the zlib or `zlib-dynamic` options are also chosen.
 
 This now only enables the `failed-malloc` feature.
 
-### enable-crypto-mdebug-backtrace
+### enable-allocfail-tests
 
-This is a no-op; the project uses the compiler's address/leak sanitizer instead.
+This option enables testing that leverages the use of the crypto-mdebug feature
+to test error paths resulting from failed memory allocations.
 
 ### no-ct
 
@@ -641,30 +758,29 @@ Don't build support for datagram based BIOs.
 
 Selecting this option will also force the disabling of DTLS.
 
+### no-docs
+
+Don't build and install documentation, i.e. manual pages in various forms.
+
 ### no-dso
 
 Don't build support for loading Dynamic Shared Objects (DSO)
 
-### enable-devcryptoeng
+### enable-tls-deprecated-ec
 
-Build the `/dev/crypto` engine.
+Enable legacy TLS EC groups that were deprecated in RFC8422.  These are the
+Koblitz curves, B<secp160r1>, B<secp160r2>, B<secp192r1>, B<secp224r1>, and the
+binary Elliptic curves that would also be disabled by C<no-ec2m>.
 
-This option is automatically selected on the BSD platform, in which case it can
-be disabled with `no-devcryptoeng`.
+### enable-ec_expicit_curves
 
-### no-dynamic-engine
+Enable support for explictitly specified elliptic curves not matching the
+well-known ones. Until this option is on, such curves can't be instantiated
+from ASN.1 formats.
 
-Don't build the dynamically loaded engines.
+### no-ech
 
-This only has an effect in a shared build.
-
-### no-ec
-
-Don't build support for Elliptic Curves.
-
-### no-ec2m
-
-Don't build support for binary Elliptic Curves
+Don't build support for Encrypted Client Hello (ECH) extension.
 
 ### enable-ec_nistp_64_gcc_128
 
@@ -682,10 +798,6 @@ This option is only supported on platforms:
 ### enable-egd
 
 Build support for gathering entropy from the Entropy Gathering Daemon (EGD).
-
-### no-engine
-
-Don't build support for loading engines.
 
 ### no-err
 
@@ -719,6 +831,26 @@ Build (and install) the FIPS provider
 Don't perform FIPS module run-time checks related to enforcement of security
 parameters such as minimum security strength of keys.
 
+### no-fips-post
+
+Don't perform FIPS module Power On Self Tests.
+
+This option MUST be used for debugging only as it makes the FIPS provider
+non-compliant. It is useful when setting breakpoints in FIPS algorithms.
+
+### enable-fips-jitter
+
+Use the CPU Jitter library as a FIPS validated entropy source.
+
+This option will only produce a compliant FIPS provider if you have:
+
+1. independently performed the required [SP 800-90B] entropy assessments;
+2. meet the minimum required entropy as specified by [jitterentropy-library];
+3. obtain an [ESV] certificate for the [jitterentropy-library] and
+4. have had the resulting FIPS provider certified by the [CMVP].
+
+Failure to do all of these will produce a non-compliant FIPS provider.
+
 ### enable-fuzz-libfuzzer, enable-fuzz-afl
 
 Build with support for fuzzing using either libfuzzer or AFL.
@@ -736,6 +868,10 @@ Note that if this feature is enabled then GOST ciphersuites are only available
 if the GOST algorithms are also available through loading an externally supplied
 engine.
 
+### no-http
+
+Disable HTTP support.
+
 ### no-legacy
 
 Don't build the legacy provider.
@@ -748,9 +884,7 @@ Don't generate dependencies.
 
 ### no-module
 
-Don't build any dynamically loadable engines.
-
-This also implies `no-dynamic-engine`.
+Don't build any dynamically loadable modules.
 
 ### no-multiblock
 
@@ -766,17 +900,13 @@ Don't build support for the Next Protocol Negotiation (NPN) TLS extension.
 
 Don't build support for Online Certificate Status Protocol (OCSP).
 
-### no-padlockeng
-
-Don't build the padlock engine.
-
-### no-hw-padlock
-
-As synonym for `no-padlockeng`.  Deprecated and should not be used.
-
 ### no-pic
 
 Don't build with support for Position Independent Code.
+
+### enable-pie
+
+Build with support for Position Independent Execution.
 
 ### no-pinshared
 
@@ -786,14 +916,22 @@ By default OpenSSL will attempt to stay in memory until the process exits.
 This is so that libcrypto and libssl can be properly cleaned up automatically
 via an `atexit()` handler.  The handler is registered by libcrypto and cleans
 up both libraries.  On some platforms the `atexit()` handler will run on unload of
-libcrypto (if it has been dynamically loaded) rather than at process exit.  This
-option can be used to stop OpenSSL from attempting to stay in memory until the
+libcrypto (if it has been dynamically loaded) rather than at process exit.
+
+This option can be used to stop OpenSSL from attempting to stay in memory until the
 process exits.  This could lead to crashes if either libcrypto or libssl have
 already been unloaded at the point that the atexit handler is invoked, e.g.  on a
 platform which calls `atexit()` on unload of the library, and libssl is unloaded
-before libcrypto then a crash is likely to happen.  Applications can suppress
-running of the `atexit()` handler at run time by using the
-`OPENSSL_INIT_NO_ATEXIT` option to `OPENSSL_init_crypto()`.
+before libcrypto then a crash is likely to happen.
+
+Note that shared library pinning is not automatically disabled for static builds,
+i.e., `no-shared` does not imply `no-pinshared`. This may come as a surprise when
+linking libcrypto statically into a shared third-party library, because in this
+case the shared library will be pinned. To prevent this behaviour, you need to
+configure the static build using `no-shared` and `no-pinshared` together.
+
+Applications can suppress running of the `atexit()` handler at run time by
+using the `OPENSSL_INIT_NO_ATEXIT` option to `OPENSSL_init_crypto()`.
 See the man page for it for further details.
 
 ### no-posix-io
@@ -822,6 +960,10 @@ Build support for Stream Control Transmission Protocol (SCTP).
 Do not create shared libraries, only static ones.
 
 See [Notes on shared libraries](#notes-on-shared-libraries) below.
+
+### no-sm2-precomp
+
+Disable using the SM2 precomputed table on aarch64 to make the library smaller.
 
 ### no-sock
 
@@ -859,12 +1001,6 @@ This removes the `-trace` option from `s_client` and `s_server`, and omits the
 
 Disabling `ssl-trace` may provide a small reduction in libssl binary size.
 
-### no-static-engine
-
-Don't build the statically linked engines.
-
-This only has an impact when not built "shared".
-
 ### no-stdio
 
 Don't use anything from the C header file `stdio.h` that makes use of the `FILE`
@@ -875,6 +1011,14 @@ tests also use the command line applications, the tests will also be skipped.
 ### no-tests
 
 Don't build test programs or run any tests.
+
+### enable-tfo
+
+Build with support for TCP Fast Open (RFC7413). Supported on Linux, macOS and FreeBSD.
+
+### no-quic
+
+Don't build with QUIC support.
 
 ### no-threads
 
@@ -888,11 +1032,43 @@ will usually require additional system-dependent options!
 
 See [Notes on multi-threading](#notes-on-multi-threading) below.
 
+### no-thread-pool
+
+Don't build with support for thread pool functionality.
+
+### thread-pool
+
+Build with thread pool functionality. If enabled, OpenSSL algorithms may
+use the thread pool to perform parallel computation. This option in itself
+does not enable OpenSSL to spawn new threads. Currently the only supported
+thread pool mechanism is the default thread pool.
+
+### no-default-thread-pool
+
+Don't build with support for default thread pool functionality.
+
+### default-thread-pool
+
+Build with default thread pool functionality. If enabled, OpenSSL may create
+and manage threads up to a maximum number of threads authorized by the
+application. Supported on POSIX compliant platforms and Windows.
+
 ### enable-trace
 
 Build with support for the integrated tracing api.
 
 See manual pages OSSL_trace_set_channel(3) and OSSL_trace_enabled(3) for details.
+
+### enable-sslkeylog
+
+Build with support for the SSLKEYLOGFILE environment variable
+
+When enabled, setting SSLKEYLOGFILE to a file path records the keys exchanged
+during a TLS handshake for use in analysis tools like wireshark.  Note that the
+use of this mechanism allows for decryption of application payloads found in
+captured packets using keys from the key log file and therefore has significant
+security consequences.  See Section 3 of
+[the draft standard for SSLKEYLOGFILE](https://datatracker.ietf.org/doc/draft-ietf-tls-keylogfile/)
 
 ### no-ts
 
@@ -940,6 +1116,25 @@ when needed.
 
 This is only supported on systems where loading of shared libraries is supported.
 
+### enable-zstd
+
+Build with support for Zstd compression/decompression.
+
+### enable-zstd-dynamic
+
+Like the enable-zstd option, but has OpenSSL load the Zstd library dynamically
+when needed.
+
+This is only supported on systems where loading of shared libraries is supported.
+
+### enable-unstable-qlog
+
+Enables qlog output support for the QUIC protocol. This functionality is
+unstable and implements a draft version of the qlog specification. The qlog
+output from OpenSSL will change in incompatible ways in future, and is not
+subject to any format stability or compatibility guarantees at this time. See
+the manpage openssl-qlog(7) for details.
+
 ### 386
 
 In 32-bit x86 builds, use the 80386 instruction set only in assembly modules
@@ -956,35 +1151,47 @@ Don't build support for negotiating the specified SSL/TLS protocol.
 
 If `no-tls` is selected then all of `tls1`, `tls1_1`, `tls1_2` and `tls1_3`
 are disabled.
-Similarly `no-dtls` will disable `dtls1` and `dtls1_2`.  The `no-ssl` option is
-synonymous with `no-ssl3`.  Note this only affects version negotiation.
+Similarly `no-dtls` will disable `dtls1` and `dtls1_2`.
+`no-ssl` and `no-ssl3` are deprecated and do nothing.
 OpenSSL will still provide the methods for applications to explicitly select
 the individual protocol versions.
 
+### no-integrity-only-ciphers
+
+Don't build support for integrity only ciphers in tls.
+
 ### no-{protocol}-method
 
-    no-{ssl|ssl3|tls|tls1|tls1_1|tls1_2|tls1_3|dtls|dtls1|dtls1_2}-method
+    no-{ssl3|tls1|tls1_1|tls1_2|dtls1|dtls1_2}-method
 
 Analogous to `no-{protocol}` but in addition do not build the methods for
 applications to explicitly select individual protocol versions.  Note that there
 is no `no-tls1_3-method` option because there is no application method for
 TLSv1.3.
+`no-ssl3` is deprecated and does nothing.
 
 Using individual protocol methods directly is deprecated.  Applications should
 use `TLS_method()` instead.
 
 ### enable-{algorithm}
 
-    enable-{md2|rc5}
+    enable-{md2|rc5|lms}
 
 Build with support for the specified algorithm.
+
+The `lms` algorithm support is currently limited to verification only as per
+[SP 800-208](https://csrc.nist.gov/pubs/sp/800/208/final).
 
 ### no-{algorithm}
 
     no-{aria|bf|blake2|camellia|cast|chacha|cmac|
-        des|dh|dsa|ecdh|ecdsa|idea|md4|mdc2|ocb|
-        poly1305|rc2|rc4|rmd160|scrypt|seed|
-        siphash|siv|sm2|sm3|sm4|whirlpool}
+        des|dh|dsa|
+        ec|ec2m|ecdh|ecdsa|hmac-drbg-kdf|idea|kbkdf|krb5kdf|
+        md4|mdc2|
+        ml-dsa|ml-kem|
+        ocb|poly1305|pvkkdf|rc2|rc4|rmd160|scrypt|
+        seed|siphash|siv|slh-dsa|sm2|sm3|sm4|snmpkdf|srtpkdf|sshkdf|sskdf|
+        x942kdf|x963kdf|whirlpool}
 
 Build without support for the specified algorithm.
 
@@ -1009,7 +1216,7 @@ below and how these flags interact with those variables.
 
 Additional options that are not otherwise recognised are passed through as
 they are to the compiler as well.  Unix-style options beginning with a
-`-` or `+` and Windows-style options beginning with a `/` are recognized.
+`-` or `+` and Windows-style options beginning with a `/` are recognised.
 Again, consult your compiler documentation.
 
 If the option contains arguments separated by spaces, then the URL-style
@@ -1138,23 +1345,21 @@ Configure OpenSSL
 
 ### Automatic Configuration
 
-On some platform a `config` script is available which attempts to guess
-your operating system (and compiler, if necessary) and calls the `Configure`
-Perl script with appropriate target based on its guess.  Further options can
-be supplied to the `config` script, which will be passed on to the `Configure`
-script.
+In previous version, the `config` script determined the platform type and
+compiler and then called `Configure`. Starting with version 3.0, they are
+the same.
 
 #### Unix / Linux / macOS
 
-    $ ./Configure [[ options ]]
+    $ ./Configure [options...]
 
 #### OpenVMS
 
-    $ perl Configure [[ options ]]
+    $ perl Configure [options...]
 
 #### Windows
 
-    $ perl Configure [[ options ]]
+    $ perl Configure [options...]
 
 ### Manual Configuration
 
@@ -1176,12 +1381,13 @@ When you have identified your system (and if necessary compiler) use this
 name as the argument to `Configure`.  For example, a `linux-elf` user would
 run:
 
-    $ ./Configure linux-elf [[ options ]]
+    $ ./Configure linux-elf [options...]
 
 ### Creating your own Configuration
 
 If your system isn't listed, you will have to create a configuration
-file named `Configurations/{{ something }}.conf` and add the correct
+file named `Configurations/YOURFILENAME.conf` (replace `YOURFILENAME`
+with a filename of your choosing) and add the correct
 configuration for your system.  See the available configs as examples
 and read [Configurations/README.md](Configurations/README.md) and
 [Configurations/README-design.md](Configurations/README-design.md)
@@ -1195,6 +1401,14 @@ and `descrip.mms` on OpenVMS) from a suitable template in `Configurations/`,
 and defines various macros in `include/openssl/configuration.h` (generated
 from `include/openssl/configuration.h.in`.
 
+If none of the generated build files suit your purpose, it's possible to
+write your own build file template and give its name through the environment
+variable `BUILDFILE`.  For example, Ninja build files could be supported by
+writing `Configurations/build.ninja.tmpl` and then configure with `BUILDFILE`
+set like this (Unix syntax shown, you'll have to adapt for other platforms):
+
+    $ BUILDFILE=build.ninja perl Configure [options...]
+
 ### Out of Tree Builds
 
 OpenSSL can be configured to build in a build directory separate from the
@@ -1205,21 +1419,21 @@ directory and invoking the configuration commands from there.
 
     $ mkdir /var/tmp/openssl-build
     $ cd /var/tmp/openssl-build
-    $ /PATH/TO/OPENSSL/SOURCE/Configure [[ options ]]
+    $ /PATH/TO/OPENSSL/SOURCE/Configure [options...]
 
 #### OpenVMS example
 
     $ set default sys$login:
     $ create/dir [.tmp.openssl-build]
     $ set default [.tmp.openssl-build]
-    $ perl D:[PATH.TO.OPENSSL.SOURCE]Configure [[ options ]]
+    $ perl D:[PATH.TO.OPENSSL.SOURCE]Configure [options...]
 
 #### Windows example
 
     $ C:
     $ mkdir \temp-openssl
     $ cd \temp-openssl
-    $ perl d:\PATH\TO\OPENSSL\SOURCE\Configure [[ options ]]
+    $ perl d:\PATH\TO\OPENSSL\SOURCE\Configure [options...]
 
 Paths can be relative just as well as absolute.  `Configure` will do its best
 to translate them to relative paths whenever possible.
@@ -1283,7 +1497,6 @@ its default):
                    to build your own programs that use libcrypto
                    or libssl.
     lib            Contains the OpenSSL library files.
-    lib/engines    Contains the OpenSSL dynamically loadable engines.
 
     share/man/man1 Contains the OpenSSL command line man-pages.
     share/man/man3 Contains the OpenSSL library calls man-pages.
@@ -1309,8 +1522,6 @@ its default):
                    to build your own programs that use libcrypto
                    or libssl.
     [.LIB.'arch']  Contains the OpenSSL library files.
-    [.ENGINES'sover''pz'.'arch']
-                   Contains the OpenSSL dynamically loadable engines.
     [.SYS$STARTUP] Contains startup, login and shutdown scripts.
                    These define appropriate logical names and
                    command symbols.
@@ -1331,7 +1542,7 @@ for you convenience:
 
 The installation directory should be appropriately protected to ensure
 unprivileged users cannot make changes to OpenSSL binaries or files, or
-install engines.  If you already have a pre-installed version of OpenSSL as
+install providers.  If you already have a pre-installed version of OpenSSL as
 part of your Operating System it is recommended that you do not overwrite
 the system version and instead install to somewhere else.
 
@@ -1407,6 +1618,18 @@ over the build process.  Typically these should be defined prior to running
                    "--cross-compile-prefix" Configure flag described above. If both
                    are set then the Configure flag takes precedence.
 
+    HASHBANGPERL
+                   The command string for the Perl executable to insert in the
+                   #! line of perl scripts that will be publicly installed.
+                   Default: /usr/bin/env perl
+                   Note: the value of this variable is added to the same scripts
+                   on all platforms, but it's only relevant on Unix-like platforms.
+
+    KERNEL_BITS
+                   This can be the value `32` or `64` to specify the architecture
+                   when it is not "obvious" to the configuration. It should generally
+                   not be necessary to specify this environment variable.
+
     NM
                    The name of the nm executable to use.
 
@@ -1428,15 +1651,11 @@ over the build process.  Typically these should be defined prior to running
 
     PERL
                    The name of the Perl executable to use when building OpenSSL.
-                   Only needed if builing should use a different Perl executable
+                   Only needed if building should use a different Perl executable
                    than what is used to run the Configure script.
 
-    HASHBANGPERL
-                   The command string for the Perl executable to insert in the
-                   #! line of perl scripts that will be publicly installed.
-                   Default: /usr/bin/env perl
-                   Note: the value of this variable is added to the same scripts
-                   on all platforms, but it's only relevant on Unix-like platforms.
+    RANLIB
+                   The name of the ranlib executable to use.
 
     RC
                    The name of the rc executable to use. The default will be as
@@ -1444,9 +1663,6 @@ over the build process.  Typically these should be defined prior to running
                    defined then "windres" will be used. The WINDRES environment
                    variable is synonymous to this. If both are defined then RC
                    takes precedence.
-
-    RANLIB
-                   The name of the ranlib executable to use.
 
     WINDRES
                    See RC.
@@ -1469,6 +1685,12 @@ described here.  Examine the Makefiles themselves for the full list.
 
     build_docs
                    Build all documentation components.
+
+    debuginfo
+                    On unix platforms, this target can be used to create .debug
+                    libraries, which separate the DWARF information in the
+                    shared library ELF files into a separate file for use
+                    in post-mortem (core dump) debugging
 
     clean
                    Remove all build artefacts and return the directory to a "clean"
@@ -1582,7 +1804,7 @@ More about our support resources can be found in the [SUPPORT] file.
 
 ### Configuration Errors
 
-If the `./Configure` or `./Configure` command fails with an error message,
+If the `./config` or `./Configure` command fails with an error message,
 read the error message carefully and try to figure out whether you made
 a mistake (e.g., by providing a wrong option), or whether the script is
 working incorrectly. If you think you encountered a bug, please
@@ -1591,7 +1813,7 @@ working incorrectly. If you think you encountered a bug, please
 Along with a short description of the bug, please provide the complete
 configure command line and the relevant output including the error message.
 
-Note: To make the output readable, pleace add a 'code fence' (three backquotes
+Note: To make the output readable, please add a 'code fence' (three backquotes
 ` ``` ` on a separate line) before and after your output:
 
      ```
@@ -1776,6 +1998,24 @@ around the problem by forcing the build procedure to use the following script:
 instead of the real clang. In which case it doesn't matter what clang version
 is used, as it is the version of the GNU assembler that will be checked.
 
+Notes on profile guided optimization
+------------------------------------
+
+Some compilers support the concept of profile guided optimization.  This feature
+allows a user to build openssl and use profiling data gathered while running an
+application such that it can then be rebuilt in a way that is optimized specifically
+for that application, increasing performance.  Currently this feature is built into
+the openssl build system for x86_64 only.
+
+1) Configure openssl with the --coverage option.  This will configure the compiler to
+   record profiling data for the libcrypto and libssl libraries
+2) Run the application(s) which you wish to optimize for, ensuring that they use
+   the libraries compiled in step (1) (note this may entail the use of LD_LIBRARY_PATH)
+3) Clean the openssl build with make clean.  Note that the profile data (the .gcda and .gcno
+   files are retained through the clean operation). This is intentional.
+4) Configure openssl again, but this time select the --pgo build type.  This will use the
+   profiled data to optimize code layout for the application in question.
+
 ---
 
 <!-- Links  -->
@@ -1794,3 +2034,24 @@ is used, as it is the version of the GNU assembler that will be checked.
 
 [10-main.conf]:
     Configurations/10-main.conf
+
+[CMVP]:
+    <https://csrc.nist.gov/projects/cryptographic-module-validation-program>
+
+[ESV]:
+    <https://csrc.nist.gov/Projects/cryptographic-module-validation-program/entropy-validations>
+
+[FIPS 203]:
+    <https://csrc.nist.gov/pubs/fips/203/final>
+
+[FIPS 204]:
+    <https://csrc.nist.gov/pubs/fips/204/final>
+
+[SP 800-90B]:
+    <https://csrc.nist.gov/pubs/sp/800/90/b/final>
+
+[jitterentropy-library]:
+    <https://github.com/smuellerDD/jitterentropy-library>
+
+[FIPS 205]:
+    <https://csrc.nist.gov/pubs/fips/205/final>

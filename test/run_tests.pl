@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2015-2021 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2015-2022 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -26,25 +26,76 @@ use File::Basename;
 use FindBin;
 use lib "$FindBin::Bin/../util/perl";
 use OpenSSL::Glob;
+use Scalar::Util qw(looks_like_number);
 
 my $srctop = $ENV{SRCTOP} || $ENV{TOP};
 my $bldtop = $ENV{BLDTOP} || $ENV{TOP};
 my $recipesdir = catdir($srctop, "test", "recipes");
 my $libdir = rel2abs(catdir($srctop, "util", "perl"));
-my $jobs = $ENV{HARNESS_JOBS} // 1;
+
+my $jobs = $ENV{HARNESS_JOBS};
+if (!defined($jobs)) {
+    my $cpus = $ENV{"NUMBER_OF_PROCESSORS"}; # Windows sets this.
+    if (!defined($cpus) && $^O =~ /linux/) {
+        # Perl was built on Linux, so try nproc, which is apparently
+        # the less worse way if you are restricted in a
+        # container/cgroup
+        my $tmp = qx(nproc 2>/dev/null);
+        if ($? == 0 && $tmp > 0) {
+            $cpus = $tmp;
+        }
+    }
+    if (!defined($cpus) && -r "/proc/cpuinfo") {
+        # Smells like Linux or something else attempting bug for bug
+        # compatibility with the /proc paradigm.
+        my $tmp = qx(grep -c ^processor /proc/cpuinfo 2>/dev/null);
+        if ($? == 0 && $tmp > 0) {
+            $cpus = $tmp;
+        }
+    }
+    if (!defined($cpus)) {
+        # OpenBSD, FreeBSD, MacOS
+        my $tmp = qx(sysctl -n hw.ncpu 2>/dev/null);
+        if ($? == 0 && $tmp > 0) {
+            $cpus = $tmp;
+        }
+    }
+
+    if (defined($cpus) && $cpus > 0) {
+        $jobs = $cpus;
+    } else {
+        $jobs = 1;
+    }
+}
 
 $ENV{OPENSSL_CONF} = rel2abs(catfile($srctop, "apps", "openssl.cnf"));
 $ENV{OPENSSL_CONF_INCLUDE} = rel2abs(catdir($bldtop, "test"));
 $ENV{OPENSSL_MODULES} = rel2abs(catdir($bldtop, "providers"));
-$ENV{OPENSSL_ENGINES} = rel2abs(catdir($bldtop, "engines"));
 $ENV{CTLOG_FILE} = rel2abs(catfile($srctop, "test", "ct", "log_list.cnf"));
 
+# On platforms that support this, this will ensure malloc returns data that is
+# set to a non-zero value. Can be helpful for detecting uninitialized reads in
+# some situations.
+$ENV{'MALLOC_PERTURB_'} = '128' if !defined $ENV{'MALLOC_PERTURB_'};
+
+my $tap_verbosity = exists $ENV{'HARNESS_VERBOSE'} ? $ENV{'HARNESS_VERBOSE'} : 0;
+# If $tap_verbosity looks like a number, keep its value.  Otherwise, enforce a
+# numeric value for its truthiness.
+$tap_verbosity =
+    looks_like_number($tap_verbosity)
+    ? $tap_verbosity
+    : ($tap_verbosity ? 1 : 0);
+# Show test times by default, unless we have lowered verbosity (HARNESS_VERBOSE value < 0).
+my $tap_timer =  ($tap_verbosity >= 0) ? 1 : 0;
+# But also ensure HARNESS_TIMER is respected if it is set.
+$tap_timer = exists $ENV{'HARNESS_TIMER'} ? $ENV{'HARNESS_TIMER'} : $tap_timer;
+
 my %tapargs =
-    ( verbosity         => $ENV{HARNESS_VERBOSE} ? 1 : 0,
+    ( verbosity         => $tap_verbosity,
       lib               => [ $libdir ],
       switches          => '-w',
       merge             => 1,
-      timer             => $ENV{HARNESS_TIMER} ? 1 : 0,
+      timer             => $tap_timer,
     );
 
 if ($jobs > 1) {
@@ -170,6 +221,7 @@ $eres = eval {
         my $failure_verbosity = $openssl_args{failure_verbosity};
         my @plans = (); # initial level, no plan yet
         my $output_buffer = "";
+        my $in_indirect = 0;
 
         # We rely heavily on perl closures to make failure verbosity work
         # We need to do so, because there's no way to safely pass extra
@@ -206,7 +258,28 @@ $eres = eval {
                         $output_buffer = ""; # ignore comments etc. until plan
                     } elsif ($is_test) { # result of a test
                         pop @plans if @plans && --($plans[-1]) <= 0;
-                        print $output_buffer if !$is_ok;
+                        if ($output_buffer =~ /.*Indirect leak of.*/ == 1) {
+                            my @asan_array = split("\n", $output_buffer);
+                            foreach (@asan_array) {
+                                if ($_ =~ /.*Indirect leak of.*/ == 1) {
+                                    if ($in_indirect != 1) {
+                                        print "::group::Indirect Leaks\n";
+                                    }
+                                    $in_indirect = 1;
+                                }
+                                print "$_\n";
+                                if ($_ =~ /.*Indirect leak of.*/ != 1) {
+                                    if ($_ =~ /^    #.*/ == 0) {
+                                        if ($in_indirect != 0) {
+                                            print "\n::endgroup::\n";
+                                        }
+                                        $in_indirect = 0;
+                                    }
+                                }
+                            }
+                        } else {
+                            print $output_buffer if !$is_ok;
+                        }
                         print "\n".$self->as_string
                             if !$is_ok || $failure_verbosity == 2;
                         print "\n# ------------------------------------------------------------------------------" if !$is_ok;
@@ -309,10 +382,12 @@ my $harness = $package->new(\%tapargs);
 my $ret =
     $harness->runtests(map { [ abs2rel($_, rel2abs(curdir())), basename($_) ] }
                        @preps);
-die if $ret->has_errors;
-$ret =
-    $harness->runtests(map { [ abs2rel($_, rel2abs(curdir())), basename($_) ] }
-                       sort { reorder($a) cmp reorder($b) } keys %tests);
+
+if (ref($ret) ne "TAP::Parser::Aggregator" || !$ret->has_errors) {
+    $ret =
+        $harness->runtests(map { [ abs2rel($_, rel2abs(curdir())), basename($_) ] }
+                           sort { reorder($a) cmp reorder($b) } keys %tests);
+}
 
 # If this is a TAP::Parser::Aggregator, $ret->has_errors is the count of
 # tests that failed.  We don't bother with that exact number, just exit

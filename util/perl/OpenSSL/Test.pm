@@ -1,4 +1,4 @@
-# Copyright 2016-2021 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2016-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -10,6 +10,7 @@ package OpenSSL::Test;
 use strict;
 use warnings;
 
+use Carp;
 use Test::More 0.96;
 
 use Exporter;
@@ -72,6 +73,7 @@ use Cwd qw/getcwd abs_path/;
 use OpenSSL::Util;
 
 my $level = 0;
+my $idx = 0;
 
 # The name of the test.  This is set by setup() and is used in the other
 # functions to verify that setup() has been used.
@@ -202,7 +204,7 @@ sub indir {
 
     my $reverse = __cwd($subdir,%opts);
     BAIL_OUT("FAILURE: indir, \"$subdir\" wasn't possible to move into")
-	unless $reverse;
+        unless $reverse;
 
     $codeblock->();
 
@@ -327,8 +329,16 @@ sub app {
     return sub {
         my @cmdargs = ( @{$cmd} );
         my @prog = __fixup_prg(__apps_file(shift @cmdargs, __exeext()));
-        return cmd([ @prog, @cmdargs ],
-                   exe_shell => $ENV{EXE_SHELL}, %opts) -> (shift);
+        if (defined $ENV{OSSL_USE_VALGRIND}) {
+            $idx=$idx+1;
+            my $resultdir = result_dir();
+            my $srcdir = srctop_dir();
+            return cmd([ "valgrind", "--leak-check=full", "--show-leak-kinds=all", "--gen-suppressions=all", "--suppressions=$srcdir/util/valgrind.suppression", "--log-file=$resultdir/valgrind.log.$idx", "--suppressions=$srcdir/util/valgrind.suppression", @prog, @cmdargs ],
+                       exe_shell => $ENV{EXE_SHELL}, %opts) -> (shift);
+        } else {
+            return cmd([ @prog, @cmdargs ],
+                       exe_shell => $ENV{EXE_SHELL}, %opts) -> (shift);
+        }
     }
 }
 
@@ -349,8 +359,16 @@ sub test {
     return sub {
         my @cmdargs = ( @{$cmd} );
         my @prog = __fixup_prg(__test_file(shift @cmdargs, __exeext()));
-        return cmd([ @prog, @cmdargs ],
+        if (defined $ENV{OSSL_USE_VALGRIND}) {
+           $idx=$idx+1;
+           my $resultdir = result_dir();
+           my $srcdir = srctop_dir();
+           return cmd([ "valgrind", "--leak-check=full", "--show-leak-kinds=all", "--gen-suppressions=all", "--suppressions=$srcdir/util/valgrind.suppression", "--log-file=$resultdir/valgrind.log.$idx", "--suppressions=$srcdir/util/valgrind.suppression", @prog, @cmdargs ],
                    exe_shell => $ENV{EXE_SHELL}, %opts) -> (shift);
+        } else {
+            return cmd([ @prog, @cmdargs ],
+                   exe_shell => $ENV{EXE_SHELL}, %opts) -> (shift);
+        }
     }
 }
 
@@ -434,8 +452,8 @@ sub run {
     return () if !$cmd;
 
     my $prefix = "";
-    if ( $^O eq "VMS" ) {	# VMS
-	$prefix = "pipe ";
+    if ( $^O eq "VMS" ) { # VMS
+        $prefix = "pipe ";
     }
 
     my @r = ();
@@ -464,29 +482,27 @@ sub run {
 
     $ENV{HARNESS_OSSL_LEVEL} = $level + 1;
 
+    # We prefix the output with "# " in non-capture mode by default to avoid
+    # its interpretation by the TAP consumer.
+    my $default_prefix = $opts{capture} ? "" : "# ";
+    my $pipe;
+    local $_;
+
+    open($pipe, '-|', "$prefix$cmd") or die "Can't start command: $!";
+    while(<$pipe>) {
+        my $l = ($opts{prefix} // $default_prefix) . $_;
+        if ($opts{capture}) {
+            push @r, $l;
+        } else {
+            print STDOUT $l;
+        }
+    }
+    close $pipe;
+
     # The dance we do with $? is the same dance the Unix shells appear to
     # do.  For example, a program that gets aborted (and therefore signals
     # SIGABRT = 6) will appear to exit with the code 134.  We mimic this
     # to make it easier to compare with a manual run of the command.
-    if ($opts{capture} || defined($opts{prefix})) {
-	my $pipe;
-	local $_;
-
-	open($pipe, '-|', "$prefix$cmd") or die "Can't start command: $!";
-	while(<$pipe>) {
-	    my $l = ($opts{prefix} // "") . $_;
-	    if ($opts{capture}) {
-		push @r, $l;
-	    } else {
-		print STDOUT $l;
-	    }
-	}
-	close $pipe;
-    } else {
-	$ENV{HARNESS_OSSL_PREFIX} = "# ";
-	system("$prefix$cmd");
-	delete $ENV{HARNESS_OSSL_PREFIX};
-    }
     $e = ($? & 0x7f) ? ($? & 0x7f)|0x80 : ($? >> 8);
     $r = $hooks{exit_checker}->($e);
     if ($opts{statusvar}) {
@@ -514,9 +530,9 @@ sub run {
     $? = 0;
 
     if ($opts{capture}) {
-	return @r;
+        return @r;
     } else {
-	return $r;
+        return $r;
     }
 }
 
@@ -524,7 +540,7 @@ END {
     my $tb = Test::More->builder;
     my $failure = scalar(grep { $_ == 0; } $tb->summary);
     if ($failure && $end_with_bailout) {
-	BAIL_OUT("Stoptest!");
+        BAIL_OUT("Stoptest!");
     }
 }
 
@@ -557,8 +573,11 @@ operating system.
 =cut
 
 sub bldtop_dir {
-    return __bldtop_dir(@_);	# This caters for operating systems that have
-				# a very distinct syntax for directories.
+    my $d = __bldtop_dir(@_);   # This caters for operating systems that have
+                                # a very distinct syntax for directories.
+
+    croak "$d isn't a directory" if -e $d && ! -d $d;
+    return $d;
 }
 
 =over 4
@@ -576,7 +595,10 @@ operating system.
 =cut
 
 sub bldtop_file {
-    return __bldtop_file(@_);
+    my $f = __bldtop_file(@_);
+
+    croak "$f isn't a file" if -e $f && ! -f $f;
+    return $f;
 }
 
 =over 4
@@ -594,8 +616,11 @@ operating system.
 =cut
 
 sub srctop_dir {
-    return __srctop_dir(@_);	# This caters for operating systems that have
-				# a very distinct syntax for directories.
+    my $d = __srctop_dir(@_);   # This caters for operating systems that have
+                                # a very distinct syntax for directories.
+
+    croak "$d isn't a directory" if -e $d && ! -d $d;
+    return $d;
 }
 
 =over 4
@@ -613,7 +638,10 @@ operating system.
 =cut
 
 sub srctop_file {
-    return __srctop_file(@_);
+    my $f = __srctop_file(@_);
+
+    croak "$f isn't a file" if -e $f && ! -f $f;
+    return $f;
 }
 
 =over 4
@@ -630,7 +658,10 @@ operating system.
 =cut
 
 sub data_dir {
-    return __data_dir(@_);
+    my $d = __data_dir(@_);
+
+    croak "$d isn't a directory" if -e $d && ! -d $d;
+    return $d;
 }
 
 =over 4
@@ -647,15 +678,20 @@ file path as a string, adapted to the local operating system.
 =cut
 
 sub data_file {
-    return __data_file(@_);
+    my $f = __data_file(@_);
+
+    croak "$f isn't a file" if -e $f && ! -f $f;
+    return $f;
 }
 
 =over 4
 
-=item B<result_dir>
+=item B<result_dir LIST>
 
-C<result_dir> returns the directory where test output files should be placed
-as a string, adapted to the local operating system.
+LIST is a list of directories that make up a path from the result directory
+associated with the test (see L</DESCRIPTION> above).
+C<result_dir> returns the resulting directory as a string, adapted to the local
+operating system.
 
 =back
 
@@ -664,17 +700,20 @@ as a string, adapted to the local operating system.
 sub result_dir {
     BAIL_OUT("Must run setup() first") if (! $test_name);
 
-    return catfile($directories{RESULTS});
+    my $d = catdir($directories{RESULTS},@_);
+
+    croak "$d isn't a directory" if -e $d && ! -d $d;
+    return $d;
 }
 
 =over 4
 
-=item B<result_file FILENAME>
+=item B<result_file LIST, FILENAME>
 
-FILENAME is the name of a test output file.
-C<result_file> returns the path of the given file as a string,
-prepending to the file name the path to the directory where test output files
-should be placed, adapted to the local operating system.
+LIST is a list of directories that make up a path from the data directory
+associated with the test (see L</DESCRIPTION> above) and FILENAME is the name
+of a file located in that directory path.  C<result_file> returns the resulting
+file path as a string, adapted to the local operating system.
 
 =back
 
@@ -683,8 +722,10 @@ should be placed, adapted to the local operating system.
 sub result_file {
     BAIL_OUT("Must run setup() first") if (! $test_name);
 
-    my $f = pop;
-    return catfile(result_dir(),@_,$f);
+    my $f = catfile(result_dir(),@_);
+
+    croak "$f isn't a file" if -e $f && ! -f $f;
+    return $f;
 }
 
 =over 4
@@ -703,25 +744,25 @@ to be passed to C<run> for execution.
 sub pipe {
     my @cmds = @_;
     return
-	sub {
-	    my @cs  = ();
-	    my @dcs = ();
-	    my @els = ();
-	    my $counter = 0;
-	    foreach (@cmds) {
-		my ($c, $dc, @el) = $_->(++$counter);
+        sub {
+            my @cs  = ();
+            my @dcs = ();
+            my @els = ();
+            my $counter = 0;
+            foreach (@cmds) {
+                my ($c, $dc, @el) = $_->(++$counter);
 
-		return () if !$c;
+                return () if !$c;
 
-		push @cs, $c;
-		push @dcs, $dc;
-		push @els, @el;
-	    }
-	    return (
-		join(" | ", @cs),
-		join(" | ", @dcs),
-		@els
-		);
+                push @cs, $c;
+                push @dcs, $dc;
+                push @els, @el;
+            }
+            return (
+                join(" | ", @cs),
+                join(" | ", @dcs),
+                @els
+                );
     };
 }
 
@@ -757,14 +798,14 @@ sub with {
     my %saved_hooks = ();
 
     foreach (keys %opts) {
-	$saved_hooks{$_} = $hooks{$_}	if exists($hooks{$_});
-	$hooks{$_} = $opts{$_};
+        $saved_hooks{$_} = $hooks{$_} if exists($hooks{$_});
+        $hooks{$_} = $opts{$_};
     }
 
     $codeblock->();
 
     foreach (keys %saved_hooks) {
-	$hooks{$_} = $saved_hooks{$_};
+        $hooks{$_} = $saved_hooks{$_};
     }
 }
 
@@ -1005,10 +1046,10 @@ sub __bldtop_dir {
 # if that one is defined.
 sub __exeext {
     my $ext = "";
-    if ($^O eq "VMS" ) {	# VMS
-	$ext = ".exe";
+    if ($^O eq "VMS" ) {         # VMS
+        $ext = ".exe";
     } elsif ($^O eq "MSWin32") { # Windows
-	$ext = ".exe";
+        $ext = ".exe";
     }
     return $ENV{"EXE_EXT"} || $ext;
 }
@@ -1086,7 +1127,7 @@ sub __cwd {
     # abs_path().
     $dir = canonpath($dir);
     if ($opts{create}) {
-	mkpath($dir);
+        mkpath($dir);
     }
 
     my $abscurdir = abs_path(curdir());
@@ -1095,12 +1136,12 @@ sub __cwd {
 
     # PARANOIA: if we're not moving anywhere, we do nothing more
     if ($abscurdir eq $absdir) {
-	return $reverse;
+        return $reverse;
     }
 
     # Do not support a move to a different volume for now.  Maybe later.
     BAIL_OUT("FAILURE: \"$dir\" moves to a different volume, not supported")
-	if $reverse eq $abscurdir;
+        if $reverse eq $abscurdir;
 
     # If someone happened to give a directory that leads back to the current,
     # it's extremely silly to do anything more, so just simulate that we did
@@ -1118,32 +1159,32 @@ sub __cwd {
     # they don't change!)
     my @dirtags = sort keys %directories;
     foreach (@dirtags) {
-	if (!file_name_is_absolute($directories{$_})) {
-	    my $oldpath = abs_path($directories{$_});
-	    my $newpath = abs2rel($oldpath, $absdir);
-	    if ($debug) {
-		print STDERR "DEBUG: [dir $_] old path: $oldpath\n";
-		print STDERR "DEBUG: [dir $_] new base: $absdir\n";
-		print STDERR "DEBUG: [dir $_] resulting new path: $newpath\n";
-	    }
-	    $tmp_directories{$_} = $newpath;
-	}
+        if (!file_name_is_absolute($directories{$_})) {
+            my $oldpath = abs_path($directories{$_});
+            my $newpath = abs2rel($oldpath, $absdir);
+            if ($debug) {
+                print STDERR "DEBUG: [dir $_] old path: $oldpath\n";
+                print STDERR "DEBUG: [dir $_] new base: $absdir\n";
+                print STDERR "DEBUG: [dir $_] resulting new path: $newpath\n";
+            }
+            $tmp_directories{$_} = $newpath;
+        }
     }
 
     # Treat each environment variable that was used to get us the values in
     # %directories the same was as the paths in %directories, so any sub
     # process can use their values properly as well
     foreach (@direnv) {
-	if (!file_name_is_absolute($ENV{$_})) {
-	    my $oldpath = abs_path($ENV{$_});
-	    my $newpath = abs2rel($oldpath, $absdir);
-	    if ($debug) {
-		print STDERR "DEBUG: [env $_] old path: $oldpath\n";
-		print STDERR "DEBUG: [env $_] new base: $absdir\n";
-		print STDERR "DEBUG: [env $_] resulting new path: $newpath\n";
-	    }
-	    $tmp_ENV{$_} = $newpath;
-	}
+        if (!file_name_is_absolute($ENV{$_})) {
+            my $oldpath = abs_path($ENV{$_});
+            my $newpath = abs2rel($oldpath, $absdir);
+            if ($debug) {
+                print STDERR "DEBUG: [env $_] old path: $oldpath\n";
+                print STDERR "DEBUG: [env $_] new base: $absdir\n";
+                print STDERR "DEBUG: [env $_] resulting new path: $newpath\n";
+            }
+            $tmp_ENV{$_} = $newpath;
+        }
     }
 
     # Should we just bail out here as well?  I'm unsure.
@@ -1160,21 +1201,21 @@ sub __cwd {
     }
 
     if ($debug) {
-	print STDERR "DEBUG: __cwd(), directories and files:\n";
-	print STDERR "	Moving from $abscurdir\n";
-	print STDERR "	Moving to $absdir\n";
-	print STDERR "\n";
-	print STDERR "	\$directories{BLDTEST} = \"$directories{BLDTEST}\"\n";
-	print STDERR "	\$directories{SRCTEST} = \"$directories{SRCTEST}\"\n";
-	print STDERR "	\$directories{SRCDATA} = \"$directories{SRCDATA}\"\n"
+        print STDERR "DEBUG: __cwd(), directories and files:\n";
+        print STDERR "	Moving from $abscurdir\n";
+        print STDERR "	Moving to $absdir\n";
+        print STDERR "\n";
+        print STDERR "	\$directories{BLDTEST} = \"$directories{BLDTEST}\"\n";
+        print STDERR "	\$directories{SRCTEST} = \"$directories{SRCTEST}\"\n";
+        print STDERR "	\$directories{SRCDATA} = \"$directories{SRCDATA}\"\n"
             if exists $directories{SRCDATA};
-	print STDERR "	\$directories{RESULTS} = \"$directories{RESULTS}\"\n";
-	print STDERR "	\$directories{BLDAPPS} = \"$directories{BLDAPPS}\"\n";
-	print STDERR "	\$directories{SRCAPPS} = \"$directories{SRCAPPS}\"\n";
-	print STDERR "	\$directories{SRCTOP}  = \"$directories{SRCTOP}\"\n";
-	print STDERR "	\$directories{BLDTOP}  = \"$directories{BLDTOP}\"\n";
-	print STDERR "\n";
-	print STDERR "  the way back is \"$reverse\"\n";
+        print STDERR "	\$directories{RESULTS} = \"$directories{RESULTS}\"\n";
+        print STDERR "	\$directories{BLDAPPS} = \"$directories{BLDAPPS}\"\n";
+        print STDERR "	\$directories{SRCAPPS} = \"$directories{SRCAPPS}\"\n";
+        print STDERR "	\$directories{SRCTOP}  = \"$directories{SRCTOP}\"\n";
+        print STDERR "	\$directories{BLDTOP}  = \"$directories{BLDTOP}\"\n";
+        print STDERR "\n";
+        print STDERR "  the way back is \"$reverse\"\n";
     }
 
     return $reverse;
@@ -1271,8 +1312,8 @@ sub __decorate_cmd {
     $cmdstr .= "$stdin$stdout$stderr";
 
     if ($debug) {
-	print STDERR "DEBUG[__decorate_cmd]: \$cmdstr = \"$cmdstr\"\n";
-	print STDERR "DEBUG[__decorate_cmd]: \$display_cmd = \"$display_cmd\"\n";
+        print STDERR "DEBUG[__decorate_cmd]: \$cmdstr = \"$cmdstr\"\n";
+        print STDERR "DEBUG[__decorate_cmd]: \$display_cmd = \"$display_cmd\"\n";
     }
 
     return ($cmdstr, $display_cmd);
@@ -1285,7 +1326,7 @@ L<Test::More>, L<Test::Harness>
 =head1 AUTHORS
 
 Richard Levitte E<lt>levitte@openssl.orgE<gt> with assistance and
-inspiration from Andy Polyakov E<lt>appro@openssl.org<gt>.
+inspiration from Andy Polyakov E<lt>https://github.com/dot-asm<gt>.
 
 =cut
 

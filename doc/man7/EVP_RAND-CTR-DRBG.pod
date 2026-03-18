@@ -54,8 +54,7 @@ These parameters work as described in L<EVP_RAND(3)/PARAMETERS>.
 
 This Boolean indicates if a derivation function should be used or not.
 A nonzero value (the default) uses the derivation function.  A zero value
-does not.  The FIPS provider always uses the derivation function and attempts
-to set this value result in an error.
+does not.
 
 =back
 
@@ -64,7 +63,13 @@ to set this value result in an error.
 A context for CTR DRBG can be obtained by calling:
 
  EVP_RAND *rand = EVP_RAND_fetch(NULL, "CTR-DRBG", NULL);
- EVP_RAND_CTX *rctx = EVP_RAND_CTX_new(rand);
+ EVP_RAND_CTX *rctx = EVP_RAND_CTX_new(rand, NULL);
+
+The default CTR-DRBG implementation attempts to fetch the required internal
+algorithms from the provider they are built into (eg the default provider)
+regardless of the properties provided. Should the provider not implement
+the required algorithms then properties will be used to find a different
+implementation.
 
 =head1 EXAMPLES
 
@@ -98,7 +103,7 @@ L<EVP_RAND(3)/PARAMETERS>
 
 =head1 COPYRIGHT
 
-Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2020-2025 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

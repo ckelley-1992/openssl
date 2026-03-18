@@ -23,11 +23,11 @@
  * used is contained in *num;
  */
 void IDEA_ofb64_encrypt(const unsigned char *in, unsigned char *out,
-                        long length, IDEA_KEY_SCHEDULE *schedule,
-                        unsigned char *ivec, int *num)
+    long length, IDEA_KEY_SCHEDULE *schedule,
+    unsigned char *ivec, int *num)
 {
     register unsigned long v0, v1, t;
-    register int n = *num;
+    register int n = *num & 0x07;
     register long l = length;
     unsigned char d[8];
     register char *dp;

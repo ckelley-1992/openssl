@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2025 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -16,32 +16,41 @@
 #include "prov/providercommon.h"
 #include "prov/provider_ctx.h"
 
+#include "providers/implementations/ciphers/ciphercommon_gcm.inc"
+
 static int gcm_tls_init(PROV_GCM_CTX *dat, unsigned char *aad, size_t aad_len);
 static int gcm_tls_iv_set_fixed(PROV_GCM_CTX *ctx, unsigned char *iv,
-                                size_t len);
+    size_t len);
 static int gcm_tls_cipher(PROV_GCM_CTX *ctx, unsigned char *out, size_t *padlen,
-                          const unsigned char *in, size_t len);
+    const unsigned char *in, size_t len);
 static int gcm_cipher_internal(PROV_GCM_CTX *ctx, unsigned char *out,
-                               size_t *padlen, const unsigned char *in,
-                               size_t len);
+    size_t *padlen, const unsigned char *in,
+    size_t len);
+static int on_preupdate_generate_iv(PROV_GCM_CTX *ctx);
 
+/*
+ * Called from EVP_CipherInit when there is currently no context via
+ * the new_ctx() function
+ */
 void ossl_gcm_initctx(void *provctx, PROV_GCM_CTX *ctx, size_t keybits,
-                      const PROV_GCM_HW *hw, size_t ivlen_min)
+    const PROV_GCM_HW *hw)
 {
     ctx->pad = 1;
     ctx->mode = EVP_CIPH_GCM_MODE;
     ctx->taglen = UNINITIALISED_SIZET;
     ctx->tls_aad_len = UNINITIALISED_SIZET;
-    ctx->ivlen_min = ivlen_min;
     ctx->ivlen = (EVP_GCM_TLS_FIXED_IV_LEN + EVP_GCM_TLS_EXPLICIT_IV_LEN);
     ctx->keylen = keybits / 8;
     ctx->hw = hw;
     ctx->libctx = PROV_LIBCTX_OF(provctx);
 }
 
+/*
+ * Called by EVP_CipherInit via the _einit and _dinit functions
+ */
 static int gcm_init(void *vctx, const unsigned char *key, size_t keylen,
-                    const unsigned char *iv, size_t ivlen,
-                    const OSSL_PARAM params[], int enc)
+    const unsigned char *iv, size_t ivlen,
+    const OSSL_PARAM params[], int enc)
 {
     PROV_GCM_CTX *ctx = (PROV_GCM_CTX *)vctx;
 
@@ -51,10 +60,11 @@ static int gcm_init(void *vctx, const unsigned char *key, size_t keylen,
     ctx->enc = enc;
 
     if (iv != NULL) {
-        if (ivlen < ctx->ivlen_min || ivlen > sizeof(ctx->iv)) {
+        if (ivlen == 0 || ivlen > sizeof(ctx->iv)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
             return 0;
         }
+        ctx->iv_gen_rand = 0;
         ctx->ivlen = ivlen;
         memcpy(ctx->iv, iv, ivlen);
         ctx->iv_state = IV_STATE_BUFFERED;
@@ -67,20 +77,21 @@ static int gcm_init(void *vctx, const unsigned char *key, size_t keylen,
         }
         if (!ctx->hw->setkey(ctx, key, ctx->keylen))
             return 0;
+        ctx->tls_enc_records = 0;
     }
     return ossl_gcm_set_ctx_params(ctx, params);
 }
 
 int ossl_gcm_einit(void *vctx, const unsigned char *key, size_t keylen,
-                   const unsigned char *iv, size_t ivlen,
-                   const OSSL_PARAM params[])
+    const unsigned char *iv, size_t ivlen,
+    const OSSL_PARAM params[])
 {
     return gcm_init(vctx, key, keylen, iv, ivlen, params, 1);
 }
 
 int ossl_gcm_dinit(void *vctx, const unsigned char *key, size_t keylen,
-                   const unsigned char *iv, size_t ivlen,
-                   const OSSL_PARAM params[])
+    const unsigned char *iv, size_t ivlen,
+    const OSSL_PARAM params[])
 {
     return gcm_init(vctx, key, keylen, iv, ivlen, params, 0);
 }
@@ -133,107 +144,122 @@ static int setivinv(PROV_GCM_CTX *ctx, unsigned char *in, size_t inl)
     return 1;
 }
 
+const OSSL_PARAM *ossl_gcm_gettable_ctx_params(
+    ossl_unused void *cctx, ossl_unused void *provctx)
+{
+    return ossl_cipher_gcm_get_ctx_params_list;
+}
+
 int ossl_gcm_get_ctx_params(void *vctx, OSSL_PARAM params[])
 {
     PROV_GCM_CTX *ctx = (PROV_GCM_CTX *)vctx;
-    OSSL_PARAM *p;
     size_t sz;
+    struct ossl_cipher_gcm_get_ctx_params_st p;
 
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_IVLEN);
-    if (p != NULL && !OSSL_PARAM_set_size_t(p, ctx->ivlen)) {
+    if (ctx == NULL || !ossl_cipher_gcm_get_ctx_params_decoder(params, &p))
+        return 0;
+
+    if (p.ivlen != NULL && !OSSL_PARAM_set_size_t(p.ivlen, ctx->ivlen)) {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
         return 0;
     }
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_KEYLEN);
-    if (p != NULL && !OSSL_PARAM_set_size_t(p, ctx->keylen)) {
+
+    if (p.keylen != NULL && !OSSL_PARAM_set_size_t(p.keylen, ctx->keylen)) {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
         return 0;
     }
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_AEAD_TAGLEN);
-    if (p != NULL) {
-        size_t taglen = (ctx->taglen != UNINITIALISED_SIZET) ? ctx->taglen :
-                         GCM_TAG_MAX_SIZE;
 
-        if (!OSSL_PARAM_set_size_t(p, taglen)) {
+    if (p.taglen != NULL) {
+        size_t taglen = (ctx->taglen != UNINITIALISED_SIZET) ? ctx->taglen : GCM_TAG_MAX_SIZE;
+
+        if (!OSSL_PARAM_set_size_t(p.taglen, taglen)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
             return 0;
         }
     }
 
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_IV);
-    if (p != NULL) {
-        if (ctx->iv_state == IV_STATE_UNINITIALISED)
+    /*
+     * Note p.updiv and p.iv are aliases that get the same information,
+     * so any code changes should be duplicated below.
+     */
+    if (p.iv != NULL) {
+        if (!on_preupdate_generate_iv(ctx))
             return 0;
-        if (ctx->ivlen > p->data_size) {
+        if (p.iv->data != NULL && ctx->ivlen > p.iv->data_size) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
             return 0;
         }
-        if (!OSSL_PARAM_set_octet_string(p, ctx->iv, ctx->ivlen)
-            && !OSSL_PARAM_set_octet_ptr(p, &ctx->iv, ctx->ivlen)) {
+        if (!OSSL_PARAM_set_octet_string_or_ptr(p.iv, ctx->iv, ctx->ivlen)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
             return 0;
         }
     }
-
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_UPDATED_IV);
-    if (p != NULL) {
-        if (ctx->iv_state == IV_STATE_UNINITIALISED)
+    if (p.updiv != NULL) {
+        if (!on_preupdate_generate_iv(ctx))
             return 0;
-        if (ctx->ivlen > p->data_size) {
+        if (p.updiv->data != NULL && ctx->ivlen > p.updiv->data_size) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
             return 0;
         }
-        if (!OSSL_PARAM_set_octet_string(p, ctx->iv, ctx->ivlen)
-            && !OSSL_PARAM_set_octet_ptr(p, &ctx->iv, ctx->ivlen)) {
+        if (!OSSL_PARAM_set_octet_string_or_ptr(p.updiv, ctx->iv, ctx->ivlen)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
             return 0;
         }
     }
 
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_AEAD_TLS1_AAD_PAD);
-    if (p != NULL && !OSSL_PARAM_set_size_t(p, ctx->tls_aad_pad_sz)) {
+    if (p.pad != NULL && !OSSL_PARAM_set_size_t(p.pad, ctx->tls_aad_pad_sz)) {
         ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
         return 0;
     }
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_AEAD_TAG);
-    if (p != NULL) {
-        sz = p->data_size;
-        if (sz == 0
-            || sz > EVP_GCM_TLS_TAG_LEN
-            || !ctx->enc
-            || ctx->taglen == UNINITIALISED_SIZET) {
+
+    if (p.tag != NULL) {
+        sz = p.tag->data_size;
+        if (!ctx->enc || ctx->taglen == UNINITIALISED_SIZET) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_TAG);
             return 0;
         }
-        if (!OSSL_PARAM_set_octet_string(p, ctx->buf, sz)) {
+        if (p.tag->data != NULL && (sz > EVP_GCM_TLS_TAG_LEN || sz == 0)) {
+            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_TAG);
+            return 0;
+        }
+
+        if (!OSSL_PARAM_set_octet_string(p.tag, ctx->buf, sz)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_SET_PARAMETER);
             return 0;
         }
     }
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_AEAD_TLS1_GET_IV_GEN);
-    if (p != NULL) {
-        if (p->data == NULL
-            || p->data_type != OSSL_PARAM_OCTET_STRING
-            || !getivgen(ctx, p->data, p->data_size))
+
+    if (p.ivgen != NULL)
+        if (p.ivgen->data == NULL
+            || p.ivgen->data_type != OSSL_PARAM_OCTET_STRING
+            || !getivgen(ctx, p.ivgen->data, p.ivgen->data_size))
             return 0;
-    }
+
+    if (p.gen != NULL && !OSSL_PARAM_set_uint(p.gen, ctx->iv_gen_rand))
+        return 0;
+
     return 1;
+}
+
+const OSSL_PARAM *ossl_gcm_settable_ctx_params(
+    ossl_unused void *cctx, ossl_unused void *provctx)
+{
+    return ossl_cipher_gcm_set_ctx_params_list;
 }
 
 int ossl_gcm_set_ctx_params(void *vctx, const OSSL_PARAM params[])
 {
     PROV_GCM_CTX *ctx = (PROV_GCM_CTX *)vctx;
-    const OSSL_PARAM *p;
     size_t sz;
     void *vp;
+    struct ossl_cipher_gcm_set_ctx_params_st p;
 
-    if (params == NULL)
-        return 1;
+    if (ctx == NULL || !ossl_cipher_gcm_set_ctx_params_decoder(params, &p))
+        return 0;
 
-    p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_AEAD_TAG);
-    if (p != NULL) {
+    if (p.tag != NULL) {
         vp = ctx->buf;
-        if (!OSSL_PARAM_get_octet_string(p, &vp, EVP_GCM_TLS_TAG_LEN, &sz)) {
+        if (!OSSL_PARAM_get_octet_string(p.tag, &vp, EVP_GCM_TLS_TAG_LEN, &sz)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
@@ -244,9 +270,8 @@ int ossl_gcm_set_ctx_params(void *vctx, const OSSL_PARAM params[])
         ctx->taglen = sz;
     }
 
-    p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_AEAD_IVLEN);
-    if (p != NULL) {
-        if (!OSSL_PARAM_get_size_t(p, &sz)) {
+    if (p.ivlen != NULL) {
+        if (!OSSL_PARAM_get_size_t(p.ivlen, &sz)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
@@ -254,16 +279,20 @@ int ossl_gcm_set_ctx_params(void *vctx, const OSSL_PARAM params[])
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
             return 0;
         }
-        ctx->ivlen = sz;
+        if (ctx->ivlen != sz) {
+            /* If the iv was already set or autogenerated, it is invalid. */
+            if (ctx->iv_state != IV_STATE_UNINITIALISED)
+                ctx->iv_state = IV_STATE_FINISHED;
+            ctx->ivlen = sz;
+        }
     }
 
-    p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_AEAD_TLS1_AAD);
-    if (p != NULL) {
-        if (p->data_type != OSSL_PARAM_OCTET_STRING) {
+    if (p.aad != NULL) {
+        if (p.aad->data_type != OSSL_PARAM_OCTET_STRING) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
-        sz = gcm_tls_init(ctx, p->data, p->data_size);
+        sz = gcm_tls_init(ctx, p.aad->data, p.aad->data_size);
         if (sz == 0) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_AAD);
             return 0;
@@ -271,31 +300,28 @@ int ossl_gcm_set_ctx_params(void *vctx, const OSSL_PARAM params[])
         ctx->tls_aad_pad_sz = sz;
     }
 
-    p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_AEAD_TLS1_IV_FIXED);
-    if (p != NULL) {
-        if (p->data_type != OSSL_PARAM_OCTET_STRING) {
+    if (p.fixed != NULL) {
+        if (p.fixed->data_type != OSSL_PARAM_OCTET_STRING) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
-        if (gcm_tls_iv_set_fixed(ctx, p->data, p->data_size) == 0) {
+        if (gcm_tls_iv_set_fixed(ctx, p.fixed->data, p.fixed->data_size) == 0) {
             ERR_raise(ERR_LIB_PROV, PROV_R_FAILED_TO_GET_PARAMETER);
             return 0;
         }
-    }
-    p = OSSL_PARAM_locate_const(params, OSSL_CIPHER_PARAM_AEAD_TLS1_SET_IV_INV);
-    if (p != NULL) {
-        if (p->data == NULL
-            || p->data_type != OSSL_PARAM_OCTET_STRING
-            || !setivinv(ctx, p->data, p->data_size))
-            return 0;
     }
 
+    if (p.inviv != NULL)
+        if (p.inviv->data == NULL
+            || p.inviv->data_type != OSSL_PARAM_OCTET_STRING
+            || !setivinv(ctx, p.inviv->data, p.inviv->data_size))
+            return 0;
 
     return 1;
 }
 
 int ossl_gcm_stream_update(void *vctx, unsigned char *out, size_t *outl,
-                           size_t outsize, const unsigned char *in, size_t inl)
+    size_t outsize, const unsigned char *in, size_t inl)
 {
     PROV_GCM_CTX *ctx = (PROV_GCM_CTX *)vctx;
 
@@ -317,7 +343,7 @@ int ossl_gcm_stream_update(void *vctx, unsigned char *out, size_t *outl,
 }
 
 int ossl_gcm_stream_final(void *vctx, unsigned char *out, size_t *outl,
-                          size_t outsize)
+    size_t outsize)
 {
     PROV_GCM_CTX *ctx = (PROV_GCM_CTX *)vctx;
     int i;
@@ -334,8 +360,8 @@ int ossl_gcm_stream_final(void *vctx, unsigned char *out, size_t *outl,
 }
 
 int ossl_gcm_cipher(void *vctx,
-                    unsigned char *out, size_t *outl, size_t outsize,
-                    const unsigned char *in, size_t inl)
+    unsigned char *out, size_t *outl, size_t outsize,
+    const unsigned char *in, size_t inl)
 {
     PROV_GCM_CTX *ctx = (PROV_GCM_CTX *)vctx;
 
@@ -364,7 +390,7 @@ int ossl_gcm_cipher(void *vctx,
  */
 static int gcm_iv_generate(PROV_GCM_CTX *ctx, int offset)
 {
-    int sz = ctx->ivlen - offset;
+    int sz = (int)(ctx->ivlen - offset);
 
     /* Must be at least 96 bits */
     if (sz <= 0 || ctx->ivlen < GCM_IV_DEFAULT_SIZE)
@@ -378,9 +404,24 @@ static int gcm_iv_generate(PROV_GCM_CTX *ctx, int offset)
     return 1;
 }
 
+/*
+ * If we try to grab the iv before the update - it wont be generated yet,
+ * so we generate it here for this case.
+ */
+static int on_preupdate_generate_iv(PROV_GCM_CTX *ctx)
+{
+    if (ctx->iv_state == IV_STATE_UNINITIALISED) {
+        if (ctx->tls_aad_len != UNINITIALISED_SIZET)
+            return 0;
+        if (!ctx->enc || !gcm_iv_generate(ctx, 0))
+            return 0;
+    }
+    return 1;
+}
+
 static int gcm_cipher_internal(PROV_GCM_CTX *ctx, unsigned char *out,
-                               size_t *padlen, const unsigned char *in,
-                               size_t len)
+    size_t *padlen, const unsigned char *in,
+    size_t len)
 {
     size_t olen = 0;
     int rv = 0;
@@ -421,8 +462,10 @@ static int gcm_cipher_internal(PROV_GCM_CTX *ctx, unsigned char *out,
         }
     } else {
         /* The tag must be set before actually decrypting data */
-        if (!ctx->enc && ctx->taglen == UNINITIALISED_SIZET)
+        if (!ctx->enc && ctx->taglen == UNINITIALISED_SIZET) {
+            ERR_raise(ERR_LIB_PROV, PROV_R_TAG_NOT_SET);
             goto err;
+        }
         if (!hw->cipherfinal(ctx, ctx->buf))
             goto err;
         ctx->iv_state = IV_STATE_FINISHED; /* Don't reuse the IV */
@@ -442,13 +485,12 @@ static int gcm_tls_init(PROV_GCM_CTX *dat, unsigned char *aad, size_t aad_len)
     size_t len;
 
     if (!ossl_prov_is_running() || aad_len != EVP_AEAD_TLS1_AAD_LEN)
-       return 0;
+        return 0;
 
     /* Save the aad for later use. */
     buf = dat->buf;
     memcpy(buf, aad, aad_len);
     dat->tls_aad_len = aad_len;
-    dat->tls_enc_records = 0;
 
     len = buf[aad_len - 2] << 8 | buf[aad_len - 1];
     /* Correct length for explicit iv. */
@@ -469,7 +511,7 @@ static int gcm_tls_init(PROV_GCM_CTX *dat, unsigned char *aad, size_t aad_len)
 }
 
 static int gcm_tls_iv_set_fixed(PROV_GCM_CTX *ctx, unsigned char *iv,
-                                size_t len)
+    size_t len)
 {
     /* Special case: -1 length restores whole IV */
     if (len == (size_t)-1) {
@@ -481,12 +523,14 @@ static int gcm_tls_iv_set_fixed(PROV_GCM_CTX *ctx, unsigned char *iv,
     /* Fixed field must be at least 4 bytes and invocation field at least 8 */
     if ((len < EVP_GCM_TLS_FIXED_IV_LEN)
         || (ctx->ivlen - (int)len) < EVP_GCM_TLS_EXPLICIT_IV_LEN)
-            return 0;
+        return 0;
     if (len > 0)
         memcpy(ctx->iv, iv, len);
-    if (ctx->enc
-        && RAND_bytes_ex(ctx->libctx, ctx->iv + len, ctx->ivlen - len, 0) <= 0)
+    if (ctx->enc) {
+        if (RAND_bytes_ex(ctx->libctx, ctx->iv + len, ctx->ivlen - len, 0) <= 0)
             return 0;
+        ctx->iv_gen_rand = 1;
+    }
     ctx->iv_gen = 1;
     ctx->iv_state = IV_STATE_BUFFERED;
     return 1;
@@ -499,7 +543,7 @@ static int gcm_tls_iv_set_fixed(PROV_GCM_CTX *ctx, unsigned char *iv,
  * and verify tag.
  */
 static int gcm_tls_cipher(PROV_GCM_CTX *ctx, unsigned char *out, size_t *padlen,
-                          const unsigned char *in, size_t len)
+    const unsigned char *in, size_t len)
 {
     int rv = 0;
     size_t arg = EVP_GCM_TLS_EXPLICIT_IV_LEN;
@@ -543,13 +587,13 @@ static int gcm_tls_cipher(PROV_GCM_CTX *ctx, unsigned char *out, size_t *padlen,
 
     tag = ctx->enc ? out + len : (unsigned char *)in + len;
     if (!ctx->hw->oneshot(ctx, ctx->buf, ctx->tls_aad_len, in, len, out, tag,
-                          EVP_GCM_TLS_TAG_LEN)) {
+            EVP_GCM_TLS_TAG_LEN)) {
         if (!ctx->enc)
             OPENSSL_cleanse(out, len);
         goto err;
     }
     if (ctx->enc)
-        plen =  len + EVP_GCM_TLS_EXPLICIT_IV_LEN + EVP_GCM_TLS_TAG_LEN;
+        plen = len + EVP_GCM_TLS_EXPLICIT_IV_LEN + EVP_GCM_TLS_TAG_LEN;
     else
         plen = len;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2025 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,7 +14,7 @@
 #include "asn1_local.h"
 
 static int asn1_get_length(const unsigned char **pp, int *inf, long *rl,
-                           long max);
+    long max);
 static void asn1_put_length(unsigned char **pp, int length);
 
 static int _asn1_check_infinite_end(const unsigned char **p, long len)
@@ -44,7 +44,7 @@ int ASN1_const_check_infinite_end(const unsigned char **p, long len)
 }
 
 int ASN1_get_object(const unsigned char **pp, long *plength, int *ptag,
-                    int *pclass, long omax)
+    int *pclass, long omax)
 {
     int i, ret;
     long len;
@@ -101,7 +101,7 @@ int ASN1_get_object(const unsigned char **pp, long *plength, int *ptag,
     }
     *pp = p;
     return ret | inf;
- err:
+err:
     ERR_raise(ERR_LIB_ASN1, ASN1_R_HEADER_TOO_LONG);
     return 0x80;
 }
@@ -114,7 +114,7 @@ int ASN1_get_object(const unsigned char **pp, long *plength, int *ptag,
  * are stored most significant digit first.
  */
 static int asn1_get_length(const unsigned char **pp, int *inf, long *rl,
-                           long max)
+    long max)
 {
     const unsigned char *p = *pp;
     unsigned long ret = 0;
@@ -158,7 +158,7 @@ static int asn1_get_length(const unsigned char **pp, int *inf, long *rl,
  * constructed == 2 for indefinite length constructed
  */
 void ASN1_put_object(unsigned char **pp, int constructed, int length, int tag,
-                     int xclass)
+    int xclass)
 {
     unsigned char *p = *pp;
     int i, ttag;
@@ -248,6 +248,12 @@ int ASN1_object_size(int constructed, int length, int tag)
     return ret + length;
 }
 
+void ossl_asn1_string_set_bits_left(ASN1_STRING *str, unsigned int num)
+{
+    str->flags &= ~0x07;
+    str->flags |= ASN1_STRING_FLAG_BITS_LEFT | (num & 0x07);
+}
+
 int ASN1_STRING_copy(ASN1_STRING *dst, const ASN1_STRING *str)
 {
     if (str == NULL)
@@ -301,18 +307,31 @@ int ASN1_STRING_set(ASN1_STRING *str, const void *_data, int len_in)
     }
     if ((size_t)str->length <= len || str->data == NULL) {
         c = str->data;
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+        /* No NUL terminator in fuzzing builds */
+        str->data = OPENSSL_realloc(c, len != 0 ? len : 1);
+#else
         str->data = OPENSSL_realloc(c, len + 1);
+#endif
         if (str->data == NULL) {
-            ERR_raise(ERR_LIB_ASN1, ERR_R_MALLOC_FAILURE);
             str->data = c;
             return 0;
         }
     }
-    str->length = len;
+    str->length = (int)len;
     if (data != NULL) {
         memcpy(str->data, data, len);
-        /* an allowance for strings :-) */
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+        /* Set the unused byte to something non NUL and printable. */
+        if (len == 0)
+            str->data[len] = '~';
+#else
+        /*
+         * Add a NUL terminator. This should not be necessary - but we add it as
+         * a safety precaution
+         */
         str->data[len] = '\0';
+#endif
     }
     return 1;
 }
@@ -334,10 +353,8 @@ ASN1_STRING *ASN1_STRING_type_new(int type)
     ASN1_STRING *ret;
 
     ret = OPENSSL_zalloc(sizeof(*ret));
-    if (ret == NULL) {
-        ERR_raise(ERR_LIB_ASN1, ERR_R_MALLOC_FAILURE);
+    if (ret == NULL)
         return NULL;
-    }
     ret->type = type;
     return ret;
 }
@@ -374,7 +391,8 @@ int ASN1_STRING_cmp(const ASN1_STRING *a, const ASN1_STRING *b)
 
     i = (a->length - b->length);
     if (i == 0) {
-        i = memcmp(a->data, b->data, a->length);
+        if (a->length != 0)
+            i = memcmp(a->data, b->data, a->length);
         if (i == 0)
             return a->type - b->type;
         else
@@ -406,16 +424,9 @@ const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *x)
     return x->data;
 }
 
-#ifndef OPENSSL_NO_DEPRECATED_1_1_0
-unsigned char *ASN1_STRING_data(ASN1_STRING *x)
-{
-    return x->data;
-}
-#endif
-
 /* |max_len| excludes NUL terminator and may be 0 to indicate no restriction */
 char *ossl_sk_ASN1_UTF8STRING2text(STACK_OF(ASN1_UTF8STRING) *text,
-                                   const char *sep, size_t max_len)
+    const char *sep, size_t max_len)
 {
     int i;
     ASN1_UTF8STRING *current;

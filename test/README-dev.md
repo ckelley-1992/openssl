@@ -29,7 +29,7 @@ The number `{nn}` is (somewhat loosely) grouped as follows:
     15-19  individual asymmetric cipher algorithms
     20-24  openssl commands (some otherwise not tested)
     25-29  certificate forms, generation and verification
-    30-35  engine and evp
+    30-35  evp
     60-79  APIs:
        60  X509 subsystem
        61  BIO subsystem
@@ -44,7 +44,7 @@ A recipe that just runs a test executable
 
 A script that just runs a program looks like this:
 
-    #! /usr/bin/perl
+    #! /usr/bin/env perl
 
     use OpenSSL::Test::Simple;
 
@@ -67,7 +67,7 @@ documentation.  For OpenSSL::Test, do `perldoc util/perl/OpenSSL/Test.pm`.
 
 A script to start from could be this:
 
-    #! /usr/bin/perl
+    #! /usr/bin/env perl
 
     use strict;
     use warnings;
@@ -130,7 +130,11 @@ Generic form of C test executables
     int setup_tests(void)
     {
         ADD_TEST(my_test);                  /* Add each test separately     */
-        return 1;                           /* Indicate success             */
+        return 1;                           /* Indicates success.  Return 0 */
+                                            /* to produce an error with a   */
+                                            /* usage message and -1 for     */
+                                            /* failure to set up with no    */
+                                            /* usage message.               */
     }
 
 You should use the `TEST_xxx` macros provided by `testutil.h` to test all failure
